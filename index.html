@@ -104,7 +104,8 @@
                 return (
                     <div className="bg-slate-800 text-white p-3 rounded-xl shadow-xl border border-slate-700 text-xs z-50">
                         <p className="font-bold mb-1 text-sm">{data.fullName}</p>
-                        <p className="text-amber-400 mb-2 font-medium">{data.produto}</p>
+                        <p className="text-amber-400 mb-1 font-medium">{data.produto}</p>
+                        <p className="text-slate-400 mb-2 text-[10px] uppercase tracking-wider font-bold border-b border-slate-700 pb-2">Proposta: <span className="text-blue-300 ml-1 text-xs">{data.proposta || 'Não Informada'}</span></p>
                         <p><span className="text-slate-400">Início Previsto:</span> {format(data.start)}</p>
                         <p><span className="text-slate-400">Conclusão Prevista:</span> {format(data.end)}</p>
                         {statusTag}
@@ -224,7 +225,7 @@
                     }
                     companiesMap[cnpjLimpo].receitaTotal += parseFloat(row['RECEITA PREVISTA'] || 0);
                     companiesMap[cnpjLimpo].atendimentos.push({
-                        id: row['ID'], status: row['STATUS'], produto: row['PRODUTO NACIONAL'],
+                        id: row['ID'], proposta: row['PROPOSTA'], status: row['STATUS'], produto: row['PRODUTO NACIONAL'],
                         dataInicio: parseDate(row['DATA DE INÍCIO PREVISTA'] || row['DATA DE EXECUÇÃO']),
                         dataConclusao: parseDate(row['DATA DE CONCLUSÃO'] || row['DATA DE ENCERRAMENTO TÉCNICO']),
                         dataConclusaoPrevista: parseDate(row['DATA DE CONCLUSÃO PREVISTA']),
@@ -426,6 +427,7 @@
                                 name: c.cliente.substring(0, 18) + (c.cliente.length > 18 ? '...' : ''),
                                 fullName: c.cliente,
                                 produto: a.produto,
+                                proposta: a.proposta,
                                 start: startT,
                                 end: endT,
                                 timeRange: [startT, endT],
