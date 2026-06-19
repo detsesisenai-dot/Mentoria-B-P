@@ -31,7 +31,7 @@
     <script type="text/babel" data-type="module">
         import React, { useState, useMemo } from 'react';
         import { createRoot } from 'react-dom/client';
-        import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, LabelList } from 'recharts';
+        import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, LabelList, ReferenceLine } from 'recharts';
 
         const CURRENT_DATE = new Date(2026, 5, 18); 
         const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
@@ -46,6 +46,8 @@
         };
 
         const parseCSV = (text) => {
+            // Remove o caractere invisível BOM (Byte Order Mark) que corrompe nomes de colunas
+            text = text.replace(/^\uFEFF/, '');
             const lines = text.split('\n').filter(l => l.trim() !== '');
             if (lines.length === 0) return [];
             
@@ -83,6 +85,34 @@
         const IconAlertCircle = ({ size = 24, className = "" }) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>);
         const IconXCircle = ({ size = 24, className = "" }) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>);
         const IconX = ({ size = 24, className = "" }) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>);
+
+        // Componente Customizado para o Tooltip do Gráfico de Gantt
+        const CustomGanttTooltip = ({ active, payload }) => {
+            if (active && payload && payload.length) {
+                const data = payload[0].payload;
+                const format = (ts) => new Date(ts).toLocaleDateString('pt-BR');
+                
+                let statusTag = null;
+                if (data.diasAtraso > 0) {
+                    statusTag = <div className="mt-2 text-red-400 font-bold flex items-center gap-1"><IconAlertCircle size={14}/> Atrasado em {data.diasAtraso} dias</div>;
+                } else if (data.diasAtraso === 0) {
+                    statusTag = <div className="mt-2 text-amber-400 font-bold flex items-center gap-1"><IconAlertCircle size={14}/> Vence hoje</div>;
+                } else {
+                    statusTag = <div className="mt-2 text-emerald-400 font-bold flex items-center gap-1"><IconCheck size={14}/> Faltam {Math.abs(data.diasAtraso)} dias</div>;
+                }
+
+                return (
+                    <div className="bg-slate-800 text-white p-3 rounded-xl shadow-xl border border-slate-700 text-xs z-50">
+                        <p className="font-bold mb-1 text-sm">{data.fullName}</p>
+                        <p className="text-amber-400 mb-2 font-medium">{data.produto}</p>
+                        <p><span className="text-slate-400">Início Previsto:</span> {format(data.start)}</p>
+                        <p><span className="text-slate-400">Conclusão Prevista:</span> {format(data.end)}</p>
+                        {statusTag}
+                    </div>
+                );
+            }
+            return null;
+        };
 
         function App() {
             // Estados para Uploads e Modais
@@ -197,6 +227,7 @@
                         id: row['ID'], status: row['STATUS'], produto: row['PRODUTO NACIONAL'],
                         dataInicio: parseDate(row['DATA DE INÍCIO PREVISTA'] || row['DATA DE EXECUÇÃO']),
                         dataConclusao: parseDate(row['DATA DE CONCLUSÃO'] || row['DATA DE ENCERRAMENTO TÉCNICO']),
+                        dataConclusaoPrevista: parseDate(row['DATA DE CONCLUSÃO PREVISTA']),
                         dataAceitacao: parseDate(row['DATA DE ACEITAÇÃO'])
                     });
                 });
@@ -281,12 +312,15 @@
                 }).sort((a, b) => b.receitaTotal - a.receitaTotal);
             }, [baseCompanies, filters]);
 
-            // RADAR CORRIGIDO: Agora usa o 'displayCompanies' (Sincronizado com os Filtros!)
+            // RADAR CORRIGIDO: Agora usa o 'displayCompanies' (Sincronizado com os Filtros Globais!)
             const radarData = useMemo(() => {
-                if (!displayCompanies) return { targets: [], totalCiclo: 0 };
+                if (!displayCompanies) return { targets: [], totalCiclo: 0, cicloExibido: radarCycle };
                 
+                // Se o filtro global de ciclo estiver ativo, ele SOBRESCREVE o filtro do Radar.
+                const cicloAtivo = filters.ciclo ? filters.ciclo : radarCycle;
+
                 const doCiclo = displayCompanies.filter(c => 
-                    radarCycle === 'Todos os Ciclos' ? c.ciclos.length > 0 : c.ciclos.includes(radarCycle)
+                    cicloAtivo === 'Todos os Ciclos' ? c.ciclos.length > 0 : c.ciclos.includes(cicloAtivo)
                 );
 
                 const semMentoria = doCiclo.filter(c => c.temMentoria === 'Não');
@@ -294,9 +328,10 @@
 
                 return {
                     totalCiclo: doCiclo.length,
-                    targets: semMentoria
+                    targets: semMentoria,
+                    cicloExibido: cicloAtivo // Passa para a UI a informação de qual ciclo travou
                 };
-            }, [displayCompanies, radarCycle]);
+            }, [displayCompanies, radarCycle, filters.ciclo]);
 
             const { metrics, chartsData } = useMemo(() => {
                 if (!displayCompanies || displayCompanies.length === 0) {
@@ -331,6 +366,8 @@
                         if(c.usuarioResponsavel) {
                             c.usuarioResponsavel.split(';').forEach(nome => {
                                 const n = nome.trim();
+                                // FIX: Filtragem ESTRITA para não plotar outros usuários que estejam na mesma empresa
+                                if (filters.usuarioResponsavel && !n.includes(filters.usuarioResponsavel)) return;
                                 if(n) consultorMentoriaCount[n] = (consultorMentoriaCount[n] || 0) + 1;
                             });
                         }
@@ -339,12 +376,17 @@
                     }
 
                     c.ciclos.forEach(ciclo => { 
+                        // FIX: Filtragem ESTRITA para não plotar barras de outros ciclos se o filtro estiver ativo
+                        if (filters.ciclo && ciclo !== filters.ciclo) return; 
+                        
                         if (cicloCount[ciclo] !== undefined) {
                             c.temMentoria === 'Sim' ? cicloCount[ciclo].com++ : cicloCount[ciclo].sem++;
                         }
                     });
                     if (c.ciclos.length === 0) {
-                        c.temMentoria === 'Sim' ? cicloCount['Sem Ciclo Definido'].com++ : cicloCount['Sem Ciclo Definido'].sem++;
+                        if (!filters.ciclo || filters.ciclo === 'Sem Ciclo Definido') {
+                            c.temMentoria === 'Sim' ? cicloCount['Sem Ciclo Definido'].com++ : cicloCount['Sem Ciclo Definido'].sem++;
+                        }
                     }
                 });
 
@@ -366,6 +408,37 @@
                     })).sort((a,b) => b['Mentoria'] - a['Mentoria'])
                 };
 
+                // LÓGICA DO GRÁFICO DE GANTT (TIMELINE DE URGÊNCIA)
+                let ganttList = [];
+                displayCompanies.filter(c => c.temMentoria === 'Não').forEach(c => {
+                    c.atendimentos.forEach(a => {
+                        if (a.dataInicio && a.dataConclusaoPrevista && a.status !== 'Arquivado' && a.status !== 'Contrato Cancelado') {
+                            let startT = a.dataInicio.getTime();
+                            let endT = a.dataConclusaoPrevista.getTime();
+                            // Previne que erros de digitação na planilha invertam a barra
+                            if(startT > endT) { const temp = startT; startT = endT; endT = temp; }
+                            
+                            // CALCULO DE ATRASO
+                            const diffTime = CURRENT_DATE.getTime() - endT;
+                            const diasAtraso = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                            ganttList.push({
+                                name: c.cliente.substring(0, 18) + (c.cliente.length > 18 ? '...' : ''),
+                                fullName: c.cliente,
+                                produto: a.produto,
+                                start: startT,
+                                end: endT,
+                                timeRange: [startT, endT],
+                                diasAtraso: diasAtraso
+                            });
+                        }
+                    });
+                });
+                
+                // Ordena pela data de conclusão mais próxima (Mais Urgente primeiro)
+                ganttList.sort((a, b) => a.end - b.end); 
+                chartsData.gantt = ganttList.slice(0, 15); // Exibe os Top 15 Alvos
+
                 const metrics = {
                     totalBase: baseCompanies.length,
                     totalCrossSell: comMentoria,
@@ -376,7 +449,7 @@
                 };
 
                 return { metrics, chartsData };
-            }, [displayCompanies, baseCompanies]);
+            }, [displayCompanies, baseCompanies, filters]);
 
             const exportToCSV = (dataList, fileName) => {
                 let csvContent = "\uFEFFCNPJ;CLIENTE;PORTE;SETOR;USUÁRIO RESPONSÁVEL;CICLOS (ACEITAÇÃO);RECEBEU MENTORIA;RÉGUA RELACIONAMENTO;PRODUTOS JÁ ADQUIRIDOS;PRODUTO RECOMENDADO\n";
@@ -570,9 +643,11 @@
                                     <div className="flex items-center gap-3 bg-white p-2 rounded-lg shadow-sm border border-amber-100">
                                         <label className="text-sm font-bold text-amber-800 pl-2">Analisar Ciclo:</label>
                                         <select 
-                                            className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-md py-1.5 px-3 font-semibold outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer"
-                                            value={radarCycle}
+                                            className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-md py-1.5 px-3 font-semibold outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer disabled:opacity-50"
+                                            value={radarData.cicloExibido}
                                             onChange={(e) => setRadarCycle(e.target.value)}
+                                            disabled={!!filters.ciclo}
+                                            title={filters.ciclo ? "Desativado pois o filtro global de Ciclo está em uso" : "Escolha o ciclo para análise"}
                                         >
                                             <option value="Ciclo 1 (2024)">Ciclo 1 (2024) - Prioridade Alta</option>
                                             <option value="Ciclo 2 (2025)">Ciclo 2 (2025) - Prioridade Média</option>
@@ -584,22 +659,22 @@
 
                                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                                     <div className="bg-white rounded-xl p-5 border border-amber-100 shadow-sm lg:col-span-1 flex flex-col justify-center text-center">
-                                        <p className="text-sm text-slate-500 font-medium mb-1">Alvos no {radarCycle.split(' ')[0]} (Filtro Atual)</p>
+                                        <p className="text-sm text-slate-500 font-medium mb-1">Alvos no {radarData.cicloExibido.split(' ')[0]} (Filtro Atual)</p>
                                         <h3 className="text-5xl font-black text-amber-600 mb-3">{radarData.targets.length}</h3>
                                         <p className="text-xs text-slate-600 bg-amber-50 p-3 rounded-lg border border-amber-100">
-                                            {radarCycle.includes('Ciclo 1') ? 
+                                            {radarData.cicloExibido.includes('Ciclo 1') ? 
                                                 <span className="font-semibold text-amber-800">🔥 Prioridade ALTA:</span> : 
-                                             radarCycle.includes('Ciclo 2') ? 
+                                             radarData.cicloExibido.includes('Ciclo 2') ? 
                                                 <span className="font-semibold text-orange-600">⚡ Prioridade MÉDIA:</span> :
                                                 <span className="font-semibold text-blue-600">ℹ️ Prioridade BAIXA:</span>
                                             }
                                             {' '}
-                                            {radarCycle.includes('Ciclo 1') ? 'Estes atendimentos foram concluídos há muito tempo. Momento ideal para reativar o relacionamento.' :
-                                             radarCycle.includes('Ciclo 2') ? 'Empresas consolidadas. Já tiveram tempo de aplicar e são alvos excelentes para expandir via Mentoria.' :
+                                            {radarData.cicloExibido.includes('Ciclo 1') ? 'Estes atendimentos foram concluídos há muito tempo. Momento ideal para reativar o relacionamento.' :
+                                             radarData.cicloExibido.includes('Ciclo 2') ? 'Empresas consolidadas. Já tiveram tempo de aplicar e são alvos excelentes para expandir via Mentoria.' :
                                              'Atendimentos recentes. Podem ainda estar na fase de implementação da Consultoria B+P.'}
                                         </p>
                                         <button 
-                                            onClick={() => exportToCSV(radarData.targets, `Alvos_Mentoria_${radarCycle.replace(/[^a-zA-Z0-9]/g, '')}.csv`)}
+                                            onClick={() => exportToCSV(radarData.targets, `Alvos_Mentoria_${radarData.cicloExibido.replace(/[^a-zA-Z0-9]/g, '')}.csv`)}
                                             className="mt-4 bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors text-sm w-full"
                                             disabled={radarData.targets.length === 0}
                                         >
@@ -677,32 +752,74 @@
                                         </ResponsiveContainer>
                                     </div>
                                 ) : (
-                                     <div className="h-64 flex items-center justify-center text-slate-400 text-sm">Nenhum cruzamento de mentoria encontrado para exibir.</div>
+                                    <div className="h-64 flex items-center justify-center text-slate-400 text-sm">Nenhum dado para o filtro atual.</div>
                                 )}
                             </div>
                         </div>
 
-                        {/* Gráficos Linha 2 - Comparativo de Ciclos */}
-                        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 mb-6">
-                            <h3 className="text-md font-semibold text-slate-800 mb-6 flex items-center gap-2">
-                                <IconLayers className="text-blue-600" /> Comparativo de Oportunidades: Atendimentos vs. Mentoria (Por Ciclo)
-                            </h3>
-                            <div className="h-72">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart data={chartsData.ciclos} margin={{ top: 0, right: 30, left: 0, bottom: 0 }}>
-                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
-                                        <XAxis dataKey="name" tick={{fontSize: 12}} />
-                                        <YAxis />
-                                        <RechartsTooltip cursor={{fill: '#f8fafc'}} />
-                                        <Legend />
-                                        <Bar dataKey="Precisa de Mentoria" stackId="a" fill="#cbd5e1" radius={[0, 0, 0, 0]} barSize={60}>
-                                            <LabelList dataKey="Precisa de Mentoria" position="insideBottom" fill="#475569" fontSize={12} formatter={(val) => val > 0 ? `${val} Alvos` : ''} />
-                                        </Bar>
-                                        <Bar dataKey="Com Mentoria" stackId="a" fill="#9333ea" radius={[4, 4, 0, 0]}>
-                                            <LabelList dataKey="Com Mentoria" position="top" fill="#9333ea" fontSize={12} formatter={(val) => val > 0 ? val : ''} />
-                                        </Bar>
-                                    </BarChart>
-                                </ResponsiveContainer>
+                        {/* GRÁFICO DE GANTT - TIMELINE DE URGÊNCIA */}
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 mb-6 relative overflow-hidden">
+                            <div className="absolute top-0 left-0 w-1.5 h-full bg-amber-500"></div>
+                            <div className="flex flex-col lg:flex-row lg:items-center justify-between mb-6 gap-4 pl-2">
+                                <div>
+                                    <h3 className="text-md font-bold text-slate-800 flex items-center gap-2">
+                                        <IconActivity className="text-amber-500" /> Timeline de Urgência: Conclusão Prevista (Alvos de Mentoria)
+                                    </h3>
+                                    <p className="text-xs text-slate-500 mt-1">Top 15 atendimentos em andamento <strong className="text-amber-600">sem mentoria</strong>, ordenados pelas datas de conclusão mais próximas.</p>
+                                </div>
+                                <div className="flex flex-wrap gap-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-red-500 shadow-sm"></span> Atrasado</span>
+                                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-orange-500 shadow-sm"></span> Vence em &lt; 30d</span>
+                                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500 shadow-sm"></span> No prazo</span>
+                                </div>
+                            </div>
+                            
+                            <div className="h-[400px]">
+                                {chartsData.gantt && chartsData.gantt.length > 0 ? (
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={chartsData.gantt} layout="vertical" margin={{ top: 20, right: 60, left: 0, bottom: 0 }}>
+                                            <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f8fafc"/>
+                                            <XAxis 
+                                                type="number" 
+                                                domain={['dataMin', 'dataMax']} 
+                                                padding={{ left: 30, right: 30 }}
+                                                tickFormatter={(unixTime) => {
+                                                    const date = new Date(unixTime);
+                                                    return date.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
+                                                }}
+                                                tick={{fontSize: 11, fill: '#64748b'}}
+                                                axisLine={{stroke: '#cbd5e1'}}
+                                            />
+                                            <YAxis dataKey="name" type="category" width={160} tick={{fontSize: 10, fill: '#334155', fontWeight: 500}} axisLine={false} tickLine={false}/>
+                                            <RechartsTooltip content={<CustomGanttTooltip />} cursor={{fill: '#f1f5f9'}} />
+                                            
+                                            <ReferenceLine x={CURRENT_DATE.getTime()} stroke="#94a3b8" strokeDasharray="4 4" label={{ position: 'top', value: 'HOJE', fill: '#64748b', fontSize: 10, fontWeight: 700 }} />
+                                            
+                                            <Bar dataKey="timeRange" radius={[4, 4, 4, 4]} barSize={16}>
+                                                <LabelList 
+                                                    content={(props) => {
+                                                        const { x, y, width, height, index } = props;
+                                                        const item = chartsData.gantt[index];
+                                                        const isDelayed = item.diasAtraso > 0;
+                                                        return (
+                                                            <text x={x + width + 5} y={y + height / 2 + 3} fill={isDelayed ? '#ef4444' : '#94a3b8'} fontSize={10} fontWeight="bold">
+                                                                {isDelayed ? `${item.diasAtraso}d atraso` : `${Math.abs(item.diasAtraso)}d rest.`}
+                                                            </text>
+                                                        );
+                                                    }} 
+                                                />
+                                                {chartsData.gantt.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={entry.diasAtraso > 0 ? '#ef4444' : entry.diasAtraso > -30 ? '#f97316' : '#f59e0b'} />
+                                                ))}
+                                            </Bar>
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                ) : (
+                                    <div className="h-full flex flex-col items-center justify-center text-slate-400 text-sm bg-slate-50/50 rounded-lg border border-dashed border-slate-200">
+                                        <IconCheck size={32} className="mb-2 text-emerald-400 opacity-80" />
+                                        Nenhum atendimento pendente válido para gerar a Timeline (ajuste os filtros ou forneça datas previstas).
+                                    </div>
+                                )}
                             </div>
                         </div>
 
